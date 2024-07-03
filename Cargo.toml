@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "avent",
+    "tests/main-test"
+]
+resolver = "2"
