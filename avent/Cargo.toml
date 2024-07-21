@@ -5,7 +5,7 @@ description = "An async event system based on tokio broadcast"
 homepage = "https://github.com/s10db/avent"
 repository = "https://github.com/s10db/avent"
 readme = "README.md"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [dependencies]
