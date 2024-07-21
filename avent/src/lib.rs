@@ -1,40 +1,45 @@
-use std::marker::PhantomData;
-use tokio::sync::broadcast;
-use tokio::time::{sleep, Duration};
+use tokio::sync::{broadcast, Mutex};
+use std::sync::Arc;
 
 pub trait Recv : 'static + std::marker::Send {
     type EventType;
     type ContextType;
 
-    fn handle(&self, event: Self::EventType, context: &mut Self::ContextType);
+    fn handle(&self, event: Self::EventType, context: &mut Self::ContextType) -> impl std::future::Future<Output = ()> + Send;
 }
 
 pub struct Context<E, C>
 {
     tx: broadcast::Sender<E>,
-    dummy: PhantomData<C>
+    state: C,
 }
 
 impl<E, C> Context<E, C>
     where E: 'static + Clone + std::marker::Send,
-          C: 'static + std::marker::Send
+          C: 'static + Clone + std::marker::Send + std::marker::Sync
 {
-    pub fn new(capacity: usize) -> Self {
+    pub fn new(capacity: usize, state: C) -> Self {
         let (tx, _) = broadcast::channel::<E>(capacity);
 
-        Self { tx, dummy: PhantomData }
+        Self { tx, state }
     }
 
-    pub async fn start(&self, recvs: Vec<Box<dyn Recv<EventType = E, ContextType = C>>>, mut context_data: C) {
+    pub async fn start(&self, recvs: Vec<impl Recv<EventType = E, ContextType = C> + std::marker::Sync+ std::clone::Clone>) {
         let mut fwd = self.tx.clone().subscribe();
+        let state = Arc::new(Mutex::new(self.state.clone()));
 
         tokio::spawn(async move {
             tracing::info!("start core loop");
             loop {
                 match fwd.recv().await {
                     Ok(msg) => {
-                        for recv in recvs.iter() {
-                            recv.handle(msg.clone(), &mut context_data);
+                        for recv in recvs.iter().cloned() {
+                            let msg = msg.clone();
+                            let st = Arc::clone(&state);
+                            tokio::spawn(async move {
+                                let mut state = st.lock().await;
+                                recv.handle(msg, &mut state).await
+                            });
                         }
                     },
                     Err(e) => {
@@ -42,7 +47,6 @@ impl<E, C> Context<E, C>
                             broadcast::error::RecvError::Closed => break,
                             broadcast::error::RecvError::Lagged(len) => {
                                 tracing::warn!("{len} message(s) were not handled, discarding");
-                                sleep(Duration::from_millis(1)).await;
                             },
                         }
                     },

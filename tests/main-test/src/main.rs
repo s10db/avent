@@ -1,15 +1,14 @@
 use tokio::sync::broadcast;
-use s10_avent::{Recv, Context};
+use avent::{Recv, Context};
+use tokio::time::{sleep, Duration};
 
-// user code
-//################
 #[derive(Debug, Clone)]
 pub enum Event {
     WithData(String),
     NoData
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct State {
     test: String
 }
@@ -21,9 +20,6 @@ struct TestSender1 {
 struct TestSender2 {
     tx: broadcast::Sender<Event>
 }
-
-struct TestReveiver1;
-struct TestReveiver2;
 
 impl TestSender1 {
     pub fn emit(&self, event: Event) {
@@ -37,25 +33,30 @@ impl TestSender2 {
     }
 }
 
-impl Recv for TestReveiver1 {
-    type EventType = Event;
-    type ContextType = State;
-
-    fn handle(&self, event: Event, context: &mut State) {
-        tracing::info!("TestReveiver1 state: {:#?}", context);
-        context.test = "other state".into();
-        tracing::info!("TestReveiver1 {:#?}", event);
-    }
+#[derive(Clone)]
+enum ReceiverTest {
+    TestReveiver1,
+    TestReveiver2,
 }
 
-impl Recv for TestReveiver2 {
+impl Recv for ReceiverTest {
     type EventType = Event;
     type ContextType = State;
 
-    fn handle(&self, event: Event, context: &mut State) {
-        tracing::info!("TestReveiver2 state: {:#?}", context);
-        context.test = "other state2".into();
-        tracing::info!("TestReveiver2 {:#?}", event);
+    async fn handle(&self, event: Event, context: &mut State) {
+        match self {
+            ReceiverTest::TestReveiver1 => {
+                tracing::info!("TestReveiver1 state: {:#?}", context);
+                sleep(Duration::from_millis(100)).await;
+                context.test = "other state".into();
+                tracing::info!("TestReveiver1 {:#?}", event);
+            },
+            ReceiverTest::TestReveiver2 => {
+                tracing::info!("TestReveiver2 state: {:#?}", context);
+                context.test = "other state2".into();
+                tracing::info!("TestReveiver2 {:#?}", event);
+            },
+        }
     }
 }
 
@@ -65,7 +66,7 @@ async fn main() {
         .with_max_level(tracing::Level::INFO)
         .init();
 
-    let ctx = Context::<Event, State>::new(32);
+    let ctx = Context::<Event, State>::new(32, State{test: "state".into()});
 
     let sender1 = TestSender1 {
         tx: ctx.get_tx()
@@ -74,11 +75,11 @@ async fn main() {
         tx: ctx.get_tx()
     };
 
-    let receiver1 = TestReveiver1;
-    let receiver2 = TestReveiver2;
+    let receiver1 = ReceiverTest::TestReveiver1;
+    let receiver2 = ReceiverTest::TestReveiver2;
 
     let _ = tokio::spawn(async move {
-        ctx.start(vec![Box::new(receiver1), Box::new(receiver2)], State{test: "state".into()}).await;
+        ctx.start(vec![receiver1, receiver2]).await;
     }).await;
 
     sender1.emit(Event::NoData);
@@ -88,5 +89,6 @@ async fn main() {
     sender1.emit(Event::NoData);
     sender2.emit(Event::NoData);
 
+    sleep(Duration::from_millis(1000)).await;
     tracing::info!("done");
 }
