@@ -1,11 +1,11 @@
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::broadcast;
 use std::sync::Arc;
 
 pub trait Recv : 'static + std::marker::Send {
     type EventType;
     type ContextType;
 
-    fn handle(&self, event: Self::EventType, context: &mut Self::ContextType) -> impl std::future::Future<Output = ()> + Send;
+    fn handle(&self, event: Self::EventType, context: &Self::ContextType) -> impl std::future::Future<Output = ()> + Send;
 }
 
 pub struct Context<E, C>
@@ -26,7 +26,7 @@ impl<E, C> Context<E, C>
 
     pub async fn start(&self, recvs: Vec<impl Recv<EventType = E, ContextType = C> + std::marker::Sync+ std::clone::Clone>) {
         let mut fwd = self.tx.clone().subscribe();
-        let state = Arc::new(Mutex::new(self.state.clone()));
+        let state = Arc::new(self.state.clone());
 
         tokio::spawn(async move {
             tracing::info!("start core loop");
@@ -37,8 +37,7 @@ impl<E, C> Context<E, C>
                             let msg = msg.clone();
                             let st = Arc::clone(&state);
                             tokio::spawn(async move {
-                                let mut state = st.lock().await;
-                                recv.handle(msg, &mut state).await
+                                recv.handle(msg, &st).await
                             });
                         }
                     },

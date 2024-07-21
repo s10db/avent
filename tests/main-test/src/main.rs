@@ -1,4 +1,6 @@
-use tokio::sync::broadcast;
+use std::sync::Arc;
+
+use tokio::sync::{broadcast, Mutex};
 use avent::{Recv, Context};
 use tokio::time::{sleep, Duration};
 
@@ -10,7 +12,7 @@ pub enum Event {
 
 #[derive(Debug, Clone)]
 struct State {
-    test: String
+    test: std::sync::Arc<tokio::sync::Mutex<String>>
 }
 
 struct TestSender1 {
@@ -43,17 +45,21 @@ impl Recv for ReceiverTest {
     type EventType = Event;
     type ContextType = State;
 
-    async fn handle(&self, event: Event, context: &mut State) {
+    async fn handle(&self, event: Event, context: &State) {
         match self {
             ReceiverTest::TestReveiver1 => {
-                tracing::info!("TestReveiver1 state: {:#?}", context);
-                sleep(Duration::from_millis(100)).await;
-                context.test = "other state".into();
+                // sleep(Duration::from_millis(100)).await;
+                let st = Arc::clone(&context.test);
+                let mut st = st.lock().await;
+                tracing::info!("TestReveiver1 state: {:#?}", st);
+                *st = "other state".into();
                 tracing::info!("TestReveiver1 {:#?}", event);
             },
             ReceiverTest::TestReveiver2 => {
-                tracing::info!("TestReveiver2 state: {:#?}", context);
-                context.test = "other state2".into();
+                let st = Arc::clone(&context.test);
+                let mut st = st.lock().await;
+                tracing::info!("TestReveiver2 state: {:#?}", st);
+                *st = "other state2".into();
                 tracing::info!("TestReveiver2 {:#?}", event);
             },
         }
@@ -66,7 +72,7 @@ async fn main() {
         .with_max_level(tracing::Level::INFO)
         .init();
 
-    let ctx = Context::<Event, State>::new(32, State{test: "state".into()});
+    let ctx = Context::<Event, State>::new(32, State{test: Arc::new(Mutex::new("state".into()))});
 
     let sender1 = TestSender1 {
         tx: ctx.get_tx()
